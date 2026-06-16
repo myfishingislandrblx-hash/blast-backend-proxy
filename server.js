@@ -2,7 +2,7 @@ const express = require('express');
 const fetch = require('node-fetch');
 
 const app = express();
-// Render will automatically inject the correct port here
+// Render assigns the network port dynamically using an environment variable
 const PORT = process.env.PORT || 3000;
 
 const NCBI_BASE = 'https://blast.ncbi.nlm.nih.gov/Blast.cgi';
@@ -13,13 +13,20 @@ const NCBI_HEADERS = {
     'Accept-Language': 'en-US,en;q=0.5',
 };
 
-// CRITICAL CORS FIX: This allows your GitHub Pages site to talk to this backend
+// HANDSHAKE & CORS FIX: This explicitly handles browser preflight (OPTIONS) checks
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*'); 
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    
+    // If the browser is sending a preflight test request, approve it immediately
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
     next();
 });
 
+// POST endpoint to submit a BLAST request
 app.post('/blast/submit', express.json(), async (req, res) => {
     const { sequence } = req.body;
 
@@ -50,6 +57,7 @@ app.post('/blast/submit', express.json(), async (req, res) => {
     }
 });
 
+// GET endpoint to fetch execution results
 app.get('/blast/results', async (req, res) => {
     const { rid } = req.query;
 
