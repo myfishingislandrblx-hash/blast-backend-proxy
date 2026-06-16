@@ -2,7 +2,6 @@ const express = require('express');
 const fetch = require('node-fetch');
 
 const app = express();
-// Render assigns the network port dynamically using an environment variable
 const PORT = process.env.PORT || 3000;
 
 const NCBI_BASE = 'https://blast.ncbi.nlm.nih.gov/Blast.cgi';
@@ -13,20 +12,17 @@ const NCBI_HEADERS = {
     'Accept-Language': 'en-US,en;q=0.5',
 };
 
-// HANDSHAKE & CORS FIX: This explicitly handles browser preflight (OPTIONS) checks
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*'); 
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     
-    // If the browser is sending a preflight test request, approve it immediately
     if (req.method === 'OPTIONS') {
         return res.sendStatus(200);
     }
     next();
 });
 
-// POST endpoint to submit a BLAST request
 app.post('/blast/submit', express.json(), async (req, res) => {
     const { sequence } = req.body;
 
@@ -39,6 +35,7 @@ app.post('/blast/submit', express.json(), async (req, res) => {
         PROGRAM: 'blastn',
         DATABASE: 'nr',
         QUERY: sequence,
+        SHORT_QUERY_ADJUST: 'true' // Fixes errors when testing with short sequences
     });
 
     try {
@@ -57,7 +54,6 @@ app.post('/blast/submit', express.json(), async (req, res) => {
     }
 });
 
-// GET endpoint to fetch execution results
 app.get('/blast/results', async (req, res) => {
     const { rid } = req.query;
 
@@ -69,6 +65,7 @@ app.get('/blast/results', async (req, res) => {
         CMD: 'Get',
         RID: rid,
         FORMAT_TYPE: 'JSON2',
+        ALIGNMENT_VIEW: 'Pairwise' // Force NCBI to stay in standard alignment layout
     });
 
     try {
@@ -86,6 +83,8 @@ app.get('/blast/results', async (req, res) => {
 
         const trimmed = text.trim();
         if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+            // Log what was received to make debugging easier if NCBI drops an HTML error
+            console.error("Received HTML response instead of JSON:", trimmed.substring(0, 300));
             return res.status(502).json({ error: 'Received non-JSON response from NCBI.' });
         }
         res.json({ status: 'done', data: JSON.parse(trimmed) });
