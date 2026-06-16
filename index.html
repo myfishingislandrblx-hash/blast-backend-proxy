@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Genome Search Platform</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+            color: #333;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 10px;
+        }
+        .search-container {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+        #status {
+            font-weight: bold;
+            margin: 15px 0;
+            color: #e67e22;
+        }
+        .status-success {
+            color: #27ae60 !important;
+        }
+        .status-error {
+            color: #c0392b !important;
+        }
+        h3 {
+            margin-top: 30px;
+            color: #34495e;
+        }
+        #results {
+            white-space: pre-wrap;
+            background: #f8f9fa;
+            padding: 15px;
+            border: 1px solid #eaeded;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Genome Search Platform</h1>
+    <p>Search DNA sequences using the NCBI BLAST API directly from your browser.</p>
+
+    <div class="search-container">
+        <input type="text" id="sequenceInput" placeholder="Enter DNA sequence (e.g., ATCGATTG...)" value="CCATTGCA">
+        <button id="searchBtn">Search</button>
+    </div>
+
+    <div id="status">Ready to search.</div>
+
+    <h3>Results:</h3>
+    <div id="results">No search performed yet.</div>
+
+    <script>
+        // NCBI BLAST recommends polling no faster than every 10 seconds.
+        const POLL_INTERVAL_MS = 12000;
+        // Give up after 10 minutes to avoid polling indefinitely.
+        const MAX_POLL_ATTEMPTS = 50;
+
+        // ⚠️ ATTENTION: Replace 'YOUR-RENDER-APP-NAME' with your actual live URL from Render!
+        const PROXY_SUBMIT = 'https://YOUR-RENDER-APP-NAME.onrender.com/blast/submit';
+        const PROXY_RESULTS = 'https://YOUR-RENDER-APP-NAME.onrender.com/blast/results';
+
+        function setStatus(message, className = '') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = className;
+        }
+
+        function setResults(text) {
+            document.getElementById('results').textContent = text;
+        }
+
+        function resetUI() {
+            document.getElementById('searchBtn').disabled = false;
+            document.getElementById('sequenceInput').disabled = false;
+        }
+
+        document.getElementById('searchBtn').addEventListener('click', async () => {
+            const sequenceInput = document.getElementById('sequenceInput');
+            const searchBtn = document.getElementById('searchBtn');
+
+            const sequence = sequenceInput.value.replace(/\s+/g, '').toUpperCase();
+
+            if (!sequence) {
+                alert('Please enter a DNA sequence.');
+                return;
+            }
+
+            // Validate that the input contains only standard DNA/IUPAC nucleotide characters.
+            if (!/^[ACGTNRYSWKMBDHV]+$/.test(sequence)) {
+                alert('Invalid sequence. Please enter only DNA nucleotide characters (A, C, G, T, N, etc.).');
+                return;
+            }
+
+            // Disable UI while a search is in progress.
+            searchBtn.disabled = true;
+            sequenceInput.disabled = true;
+            setStatus('Submitting sequence to NCBI BLAST...');
+            setResults('');
+
+            try {
+                const response = await fetch(PROXY_SUBMIT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sequence }),
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || `Submission failed with HTTP ${response.status}`);
+                }
+
+                const rid = result.rid;
+                setStatus(`Job submitted. Request ID: ${rid}. Waiting for results...`);
+
+                pollResults(rid);
+
+            } catch (error) {
+                setStatus('Submission failed.', 'status-error');
+                setResults(error.message);
+                resetUI();
+            }
+        });
+
+        async function pollResults(rid) {
+            let attempts = 0;
+
+            const checkInterval = setInterval(async () => {
+                attempts++;
+
+                // Stop polling after the maximum number of attempts.
+                if (attempts > MAX_POLL_ATTEMPTS) {
+                    clearInterval(checkInterval);
+                    setStatus('Search timed out. NCBI may be under heavy load. Try again later.', 'status-error');
+                    setResults(`Your Request ID is: ${rid}\nYou can resume later at:\nhttps://blast.ncbi.nlm.nih.gov/Blast.cgi?CMD=Get&RID=${rid}`);
+                    resetUI();
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`${PROXY_RESULTS}?rid=${encodeURIComponent(rid)}`);
+                    const result = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(result.error || `HTTP ${response.status} while polling for results`);
+                    }
+
+                    if (result.status === 'waiting') {
+                        setStatus(`Waiting for NCBI to finish the search (RID: ${rid})... attempt ${attempts}/${MAX_POLL_ATTEMPTS}`);
+                        return;
+                    }
+
+                    clearInterval(checkInterval);
+                    setStatus('Search complete!', 'status-success');
+                    setResults(JSON.stringify(result.data, null, 2));
+                    resetUI();
+
+                } catch (error) {
+                    clearInterval(checkInterval);
+                    setStatus('An error occurred while retrieving results.', 'status-error');
+                    setResults(error.message);
+                    resetUI();
+                }
+            }, POLL_INTERVAL_MS);
+        }
+    </script>
+</body>
+</html>
